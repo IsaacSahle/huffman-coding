@@ -15,25 +15,34 @@
 typedef struct node
 {
     char character;
-    int frequency;
+    unsigned int frequency;
+    struct node *left;
+    struct node *right;
 } Node;
 
-Node *heap[ASCII_VALUES];
-int heap_size = 0;
+typedef struct
+{
+    unsigned int size;
+    unsigned int capacity;
+
+    Node **array;
+} MinHeap;
 
 int valid_parameters(char *file_name, char *mode);
 void to_lower(char *str);
 void encode(char *file_name);
 void decode(char *file_name);
-Node *generate_huffman_tree(int character_frequency[]);
+Node *generate_huffman_tree(int character_frequency[], int num_unique_chars);
 
-// Source (heap_insert, heap_remove): https://www.sanfoundry.com/c-program-implement-heap/
-void heap_insert(Node* node);
-Node* heap_remove();
-void heap_init(int character_frequency[]);
-void heap_print();
-Node* create_node(int count, char character);
-
+// Source for heap operations: https://www.geeksforgeeks.org/huffman-coding-greedy-algo-3/
+void heap_insert(MinHeap *min_heap, Node *node);
+Node *heap_remove();
+MinHeap *heap_init(int num_unique_chars);
+void heap_build(MinHeap* min_heap);
+void heap_print(MinHeap* min_heap);
+Node *create_node(int count, char character);
+void swap_node(Node **a, Node **b);
+void heapify(MinHeap *min_heap, int idx);
 
 int main(int argc, char **argv)
 {
@@ -67,13 +76,18 @@ void encode(char *file_name)
         return;
     }
 
-    char *data = (char*) mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    char *data = (char *)mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    int num_unique_chars = 0;
     for (int i = 0; i < sb.st_size; i++)
     {
+        if (character_frequency[data[i]] == 0)
+        {
+            num_unique_chars += 1;
+        }
         character_frequency[data[i]] += 1;
     }
 
-    Node *root = generate_huffman_tree(character_frequency);
+    Node *root = generate_huffman_tree(character_frequency, num_unique_chars);
 
     munmap(data, sb.st_size);
     close(fd);
@@ -81,86 +95,120 @@ void encode(char *file_name)
 
 void decode(char *file_name) {}
 
-Node *generate_huffman_tree(int character_frequency[])
+Node *generate_huffman_tree(int character_frequency[], int num_unique_chars)
 {
-    heap_init(character_frequency);
-    heap_print();
+    MinHeap *min_heap = heap_init(num_unique_chars);
+    int index = 0;
+    for (int i = 0; i < ASCII_VALUES; i++)
+    {
+        if (character_frequency[i] > 0)
+        {
+            min_heap->array[index] = create_node(character_frequency[i] /* count */, i /* char */);
+            min_heap->size += 1;
+            index++;
+        }
+    }
+    heap_build(min_heap);
+    heap_print(min_heap);
     return NULL;
 }
 
-void heap_insert(Node *node)
+void heap_insert(MinHeap *min_heap, Node *node)
 {
-    heap_size++;
-    heap[heap_size] = node;
-    int now = heap_size;
-    while (heap[now / 2]->frequency > node->frequency)
+
+    ++min_heap->size;
+    int i = min_heap->size - 1;
+
+    while (i && node->frequency < min_heap->array[(i - 1) / 2]->frequency)
     {
-        heap[now] = heap[now / 2];
-        now /= 2;
+
+        min_heap->array[i] = min_heap->array[(i - 1) / 2];
+        i = (i - 1) / 2;
     }
-    heap[now] = node;
+
+    min_heap->array[i] = node;
 }
 
-Node *heap_remove()
+Node *heap_remove(MinHeap *min_heap)
 {
-    Node *min_node = heap[1];
-    Node *last_node = heap[heap_size--];
-    /* now refers to the index at which we are now */
-    int now, child;
-    for (now = 1; now * 2 <= heap_size; now = child)
+    Node *temp = min_heap->array[0];
+    min_heap->array[0] = min_heap->array[min_heap->size - 1];
+
+    --min_heap->size;
+    heapify(min_heap, 0);
+
+    return temp;
+}
+
+MinHeap *heap_init(int num_unique_chars)
+{
+    MinHeap *min_heap = (MinHeap *)malloc(sizeof(MinHeap));
+    min_heap->size = 0;
+    min_heap->capacity = num_unique_chars;
+    min_heap->array = (Node **)malloc(min_heap->capacity * sizeof(Node *));
+    return min_heap;
+}
+
+void heap_build(MinHeap* min_heap)
+{ 
+  
+    int n = min_heap->size - 1; 
+    int i; 
+  
+    for (i = (n - 1) / 2; i >= 0; --i) 
+        heapify(min_heap, i); 
+}
+
+void heap_print(MinHeap* min_heap) {
+    
+    while(min_heap->size > 0){
+        Node* node = heap_remove(min_heap);
+        printf("Char: %c Frequency: %d\n", node->character, node->frequency);
+        free(node);
+    }
+}
+
+// The standard minHeapify function.
+void heapify(MinHeap *min_heap, int idx)
+{
+
+    int smallest = idx;
+    int left = 2 * idx + 1;
+    int right = 2 * idx + 2;
+    
+    if (left < min_heap->size && min_heap->array[left]->frequency < min_heap->array[smallest]->frequency)
+        smallest = left;
+
+    if (right < min_heap->size && min_heap->array[right]->frequency < min_heap->array[smallest]->frequency)
+        smallest = right;
+
+    if (smallest != idx)
     {
-        /* child is the index of the element which is minimum among both the children */
-        /* Indexes of children are i*2 and i*2 + 1*/
-        child = now * 2;
-        /*child!=heapSize beacuse heap[heapSize+1] does not exist, which means it has only one
-         child */
-        if (child != heap_size && heap[child + 1]->frequency < heap[child]->frequency)
-        {
-            child++;
-        }
-        /* To check if the last element fits ot not it suffices to check if the last element
-         is less than the minimum element among both the children*/
-        if (last_node->frequency > heap[child]->frequency)
-        {
-            heap[now] = heap[child];
-        }
-        else /* It fits there */
-        {
-            break;
-        }
-    }
-    heap[now] = last_node;
-    return min_node;
-}
-
-void heap_init(int character_frequency[]){
-    heap_size = 0;
-    heap[0] = create_node(NULL, NULL);
-
-    for(int i = 0; i < ASCII_VALUES; i++){
-        if(character_frequency[i] > 0) {
-            heap_insert(create_node(character_frequency[i]/* count */, i /* character */));
-        }
+        swap_node(&min_heap->array[smallest], &min_heap->array[idx]);
+        heapify(min_heap, smallest);
     }
 }
 
-void heap_print(){
-    while(heap_size > 0) {
-        Node* removed_node = heap_remove();
-        printf("Char: %c Count: %d\n", removed_node->character,removed_node->frequency);
-        free(removed_node);
-    }
-}
-
-Node* create_node(int count, char character){
-    Node* node = (Node*) malloc(sizeof(Node));
-    if(node == NULL){
+Node *create_node(int count, char character)
+{
+    Node *node = (Node *)malloc(sizeof(Node));
+    if (node == NULL)
+    {
         perror("Couldn't allocate memory for heap node\n");
         exit(EXIT_FAILURE);
     }
     node->frequency = count;
     node->character = character;
+    node->left = NULL;
+    node->right = NULL;
     return node;
+}
+
+void swap_node(Node **a, Node **b)
+{
+    Node *t = *a;
+    *a = *b;
+    *b = t;
 }
 
 int valid_parameters(char *file_name, char *mode)
