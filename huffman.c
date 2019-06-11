@@ -11,11 +11,13 @@
 #define TRUE 1
 #define FALSE 0
 #define ASCII_VALUES 128
+#define AUXILIARY_CHAR '&'
 
 typedef struct node
 {
     char character;
     unsigned int frequency;
+    int auxiliary;
     struct node *left;
     struct node *right;
 } Node;
@@ -32,7 +34,7 @@ int valid_parameters(char *file_name, char *mode);
 void to_lower(char *str);
 void encode(char *file_name);
 void decode(char *file_name);
-Node *generate_huffman_tree(int character_frequency[], int num_unique_chars);
+Node* generate_huffman_tree(int character_frequency[], int num_unique_chars);
 
 // Source for heap operations: https://www.geeksforgeeks.org/huffman-coding-greedy-algo-3/
 void heap_insert(MinHeap *min_heap, Node *node);
@@ -40,7 +42,8 @@ Node *heap_remove();
 MinHeap *heap_init(int num_unique_chars);
 void heap_build(MinHeap* min_heap);
 void heap_print(MinHeap* min_heap);
-Node *create_node(int count, char character);
+void heap_print_codes(Node* node, int code[], int height);
+Node *create_node(int count, char character, int auxiliary);
 void swap_node(Node **a, Node **b);
 void heapify(MinHeap *min_heap, int idx);
 
@@ -87,7 +90,9 @@ void encode(char *file_name)
         character_frequency[data[i]] += 1;
     }
 
-    Node *root = generate_huffman_tree(character_frequency, num_unique_chars);
+    Node* root = generate_huffman_tree(character_frequency, num_unique_chars);
+    int code[100];
+    heap_print_codes(root, code, 0);
 
     munmap(data, sb.st_size);
     close(fd);
@@ -95,7 +100,7 @@ void encode(char *file_name)
 
 void decode(char *file_name) {}
 
-Node *generate_huffman_tree(int character_frequency[], int num_unique_chars)
+Node* generate_huffman_tree(int character_frequency[], int num_unique_chars)
 {
     MinHeap *min_heap = heap_init(num_unique_chars);
     int index = 0;
@@ -103,14 +108,26 @@ Node *generate_huffman_tree(int character_frequency[], int num_unique_chars)
     {
         if (character_frequency[i] > 0)
         {
-            min_heap->array[index] = create_node(character_frequency[i] /* count */, i /* char */);
+            min_heap->array[index] = create_node(character_frequency[i] /* count */, i /* char */, FALSE);
             min_heap->size += 1;
             index++;
         }
     }
     heap_build(min_heap);
-    heap_print(min_heap);
-    return NULL;
+    
+    while(min_heap->size > 1) {
+        Node* left = heap_remove(min_heap);
+        Node* right = heap_remove(min_heap);
+
+        Node* auxiliary = create_node(left->frequency + right->frequency /* count */, AUXILIARY_CHAR, TRUE);
+        
+        auxiliary->left = left;
+        auxiliary->right = right;
+
+        heap_insert(min_heap, auxiliary);
+    }
+    
+    return heap_remove(min_heap);
 }
 
 void heap_insert(MinHeap *min_heap, Node *node)
@@ -168,6 +185,28 @@ void heap_print(MinHeap* min_heap) {
     }
 }
 
+void heap_print_codes(Node* node, int code[], int height) {
+    if(node->left == NULL && node->right == NULL) {
+        // leaf
+        printf("Char: %c Freq: %d ", node->character, node->frequency);
+        for(int i = 0; i < height; i++) {
+            printf("%d ", code[i]);
+        }
+        printf("\n");
+        return;
+    }
+
+    if(node->left != NULL) {
+        code[height] = 0;
+        heap_print_codes(node->left,code,height + 1);    
+    }
+
+    if(node->right != NULL) {
+        code[height] = 1;
+        heap_print_codes(node->right,code,height + 1);
+    }
+}
+
 // The standard minHeapify function.
 void heapify(MinHeap *min_heap, int idx)
 {
@@ -189,7 +228,7 @@ void heapify(MinHeap *min_heap, int idx)
     }
 }
 
-Node *create_node(int count, char character)
+Node *create_node(int count, char character, int auxiliary)
 {
     Node *node = (Node *)malloc(sizeof(Node));
     if (node == NULL)
@@ -199,6 +238,7 @@ Node *create_node(int count, char character)
     }
     node->frequency = count;
     node->character = character;
+    node->auxiliary = auxiliary;
     node->left = NULL;
     node->right = NULL;
     return node;
