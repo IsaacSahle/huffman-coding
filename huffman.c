@@ -13,6 +13,9 @@
 #define ASCII_VALUES 128
 #define AUXILIARY_CHAR '&'
 #define MAX_HUFFMAN_TREE_HEIGHT 100
+#define ENCODED_FILE "encoded.txt"
+#define DECODE_DATA_FILE "decode-data.txt"
+#define DECODED_FILE "decoded.txt"
 
 
 typedef struct node
@@ -35,9 +38,10 @@ int valid_parameters(char *file_name, char *mode);
 void to_lower(char *str);
 int create_fd(char * file_name, int oflags, mode_t mode);
 void write_data_for_decode(int* character_frequency, int num_unique_chars);
+void read_data_for_decode(int* character_frequency, int* num_unique_chars);
 void encode(char *file_name);
 void decode(char *file_name);
-Node *generate_huffman_tree(int character_frequency[], int num_unique_chars);
+Node *generate_huffman_tree(int* character_frequency, int num_unique_chars);
 
 // Source for heap operations: https://www.geeksforgeeks.org/huffman-coding-greedy-algo-3/
 void heap_insert(MinHeap *min_heap, Node *node);
@@ -47,6 +51,7 @@ void heap_build(MinHeap *min_heap);
 void heap_print(MinHeap *min_heap);
 void heap_print_codes(Node *node, char code[], int height);
 int huffman_get_code(Node *node, char c, char code[], int height);
+void huffman_free(Node* node);
 Node *create_node(int count, char character);
 void swap_node(Node **a, Node **b);
 void heapify(MinHeap *min_heap, int idx);
@@ -65,7 +70,7 @@ int main(int argc, char **argv)
     }
     else if (strcmp(argv[2], "decode") == 0)
     {
-        // decode(argv[1]);
+        decode(argv[1]);
     }
 
     printf("File: %s Mode: %s\n", argv[1], argv[2]);
@@ -98,23 +103,65 @@ void encode(char *file_name)
     char code[MAX_HUFFMAN_TREE_HEIGHT];
     // heap_print_codes(root, code, 0);
 
-    int encoded_file_fd = create_fd("encode.txt", O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
+    int encoded_file_fd = create_fd(ENCODED_FILE, O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
     for (int i = 0; i < sb.st_size; i++)
     {
         int code_len = huffman_get_code(root, data[i], code, 0);
-        write(encoded_file_fd, code, code_len);
+        int bytes_written = write(encoded_file_fd, code, code_len);
+        if(bytes_written < code_len) {
+            perror("WTF, couldn't write all bytes");
+            exit(EXIT_FAILURE);
+        }
     }
-
-    write_data_for_decode(character_frequency, num_unique_chars);
-
+    
+    huffman_free(root);
     munmap(data, sb.st_size);
     close(encoded_file_fd);
     close(input_file_fd);
+
+    write_data_for_decode(character_frequency, num_unique_chars);
 }
 
-void decode(char *file_name) {}
+void decode(char *file_name) {
+    int character_frequency[ASCII_VALUES] = {0};
+    int num_unique_chars = 0;
+    read_data_for_decode(character_frequency, &num_unique_chars);
+    
+    int encoded_file_fd = create_fd(file_name, O_RDONLY, S_IRUSR | S_IWUSR);
+    int decoded_file_fd = create_fd(DECODED_FILE, O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
+    struct stat sb;
+    if (fstat(encoded_file_fd, &sb) == -1)
+    {
+        perror("Couldn't retrieve file size\n");
+        return;
+    }
 
-Node *generate_huffman_tree(int character_frequency[], int num_unique_chars)
+    char *data = (char *)mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, encoded_file_fd, 0);
+    Node* root = generate_huffman_tree(character_frequency, num_unique_chars);
+    
+    Node* curr = root;
+    int i = 0;
+    while(i <= sb.st_size) {
+        if(curr->left == NULL && curr->right == NULL) {
+            write(decoded_file_fd, &curr->character, 1);
+            curr = root;
+        }
+
+        if(data[i] == '0') {
+            curr = curr->left;
+        } else if(data[i] == '1') {
+            curr = curr->right;
+        }
+        i++;
+    }
+
+    huffman_free(root);
+    munmap(data, sb.st_size);
+    close(encoded_file_fd);
+    close(decoded_file_fd);
+}
+
+Node *generate_huffman_tree(int* character_frequency, int num_unique_chars)
 {
     MinHeap *min_heap = heap_init(num_unique_chars);
     int index = 0;
@@ -285,8 +332,18 @@ int huffman_get_code(Node *node, char c, char code[], int height) {
     return code_len;
 }
 
+void huffman_free(Node* node){
+    if(node == NULL) {
+        return;
+    }
+
+    huffman_free(node->left);
+    huffman_free(node->right);
+    free(node);
+}
+
 void write_data_for_decode(int* character_frequency, int num_unique_chars){
-    int fd = create_fd("decode-data.txt", O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
+    int fd = create_fd(DECODE_DATA_FILE, O_CREAT | O_TRUNC | O_RDWR, S_IRUSR | S_IWUSR);
     int output_buffer[ASCII_VALUES + 2];
     int i;
     for(i = 0; i < ASCII_VALUES; i++) {
@@ -297,6 +354,22 @@ void write_data_for_decode(int* character_frequency, int num_unique_chars){
     }
     dprintf(fd, "\n%d",num_unique_chars);
     close(fd);
+}
+
+void read_data_for_decode(int* character_frequency, int* num_unique_chars){
+    FILE* fp = fopen (DECODE_DATA_FILE, "r");
+    if(fp == NULL) {
+        perror("Could not open decode-data file\n");
+        exit(EXIT_FAILURE);
+    }
+
+    for (int i = 0; i < ASCII_VALUES; i++)
+    {
+        fscanf (fp, "%d", &character_frequency[i]);
+    }
+    fscanf(fp, "%*c", NULL);
+    fscanf(fp, "%d", num_unique_chars);
+    fclose(fp);
 }
 
 void swap_node(Node **a, Node **b)
